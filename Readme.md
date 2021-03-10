@@ -1,6 +1,6 @@
 # Elk
 
-Elk is a simple interpreted programming language. It's goal is to combine the best language features from its inspirations, Rust and Javascript, while still being quick and easy to develop in.
+Elk is a simple interpreted programming language. Its goal is to combine the best language features from its inspirations, Rust and Javascript, while still being quick and easy to develop in.
 
 ## Usage
 
