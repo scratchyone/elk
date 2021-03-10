@@ -1,0 +1,7 @@
+function print(text) {
+    __print text;
+}
+
+let x = "hello world";
+x = "nvm, goodbye world";
+print(x);
