@@ -98,6 +98,9 @@ pub enum Token {
     #[token("}")]
     CloseBrace,
 
+    #[token(".")]
+    Period,
+
     #[regex(r#""([^"\\]|\\.)*""#, |lex| {
         let slice = lex.slice();
         let n = slice[1..slice.len() - 1].to_string()
@@ -187,6 +190,7 @@ pub enum Expression {
     If(Box<Expression>, Vec<Statement>),
     Array(Vec<Expression>),
     ArrayIndex(Box<Expression>, Box<Expression>),
+    PropertyAccess(Box<Expression>, Box<Expression>),
 }
 
 pub fn parse_code(tokens: ParserStream<(Token, Range<usize>), String>) -> Code {
@@ -301,7 +305,7 @@ fn parse_expression(
     greedy: bool,
 ) -> (Expression, ParserStream<(Token, Range<usize>), String>) {
     let mut tokens = tokens;
-    let curr = match tokens.clone().peek(0) {
+    let mut curr = match tokens.clone().peek(0) {
         (Token::Int(num), _) => {
             tokens.consume(0);
             (Expression::Int(*num), tokens)
@@ -372,104 +376,127 @@ fn parse_expression(
         (_, s) => show_error(format!("Expected expression"), &s, tokens.meta.clone()),
     };
     tokens = curr.1.clone();
-    if greedy {
-        match tokens.peek(0) {
-            (Token::DoubleEq, _) => {
-                tokens.consume(0);
-                let expr = parse_expression(tokens, true);
-                tokens = expr.1;
-                return (
-                    Expression::EqCmp(Box::new(curr.0), Box::new(expr.0)),
-                    tokens,
-                );
-            }
-            (Token::GreaterThan, _) => {
-                tokens.consume(0);
-                let expr = parse_expression(tokens, true);
-                tokens = expr.1;
-                return (
-                    Expression::GtCmp(Box::new(curr.0), Box::new(expr.0)),
-                    tokens,
-                );
-            }
-            (Token::LessThan, _) => {
-                tokens.consume(0);
-                let expr = parse_expression(tokens, true);
-                tokens = expr.1;
-                return (
-                    Expression::LtCmp(Box::new(curr.0), Box::new(expr.0)),
-                    tokens,
-                );
-            }
-            (Token::GreaterThanEq, _) => {
-                tokens.consume(0);
-                let expr = parse_expression(tokens, true);
-                tokens = expr.1;
-                return (
-                    Expression::GteCmp(Box::new(curr.0), Box::new(expr.0)),
-                    tokens,
-                );
-            }
-            (Token::LessThanEq, _) => {
-                tokens.consume(0);
-                let expr = parse_expression(tokens, true);
-                tokens = expr.1;
-                return (
-                    Expression::LteCmp(Box::new(curr.0), Box::new(expr.0)),
-                    tokens,
-                );
-            }
-            (Token::Range, _) => {
-                tokens.consume(0);
-                let expr = parse_expression(tokens, true);
-                tokens = expr.1;
-                return (
-                    Expression::Range(Box::new(curr.0), Box::new(expr.0)),
-                    tokens,
-                );
-            }
-            (Token::Plus, _) => {
-                tokens.consume(0);
-                let expr = parse_expression(tokens, true);
-                tokens = expr.1;
-                return (Expression::Plus(Box::new(curr.0), Box::new(expr.0)), tokens);
-            }
-            (Token::Minus, _) => {
-                tokens.consume(0);
-                let expr = parse_expression(tokens, true);
-                tokens = expr.1;
-                return (
-                    Expression::Minus(Box::new(curr.0), Box::new(expr.0)),
-                    tokens,
-                );
-            }
-            (Token::OpenBracket, _) => {
-                tokens.consume(0);
-                let expr = parse_expression(tokens, true);
-                tokens = expr.1;
-                match tokens.consume(0) {
-                    (Token::CloseBracket, _) => {}
-                    (_, s) => show_error(format!("Expected closing bracket"), &s, tokens.meta),
-                };
+    loop {
+        if greedy {
+            match tokens.peek(0) {
+                (Token::DoubleEq, _) => {
+                    tokens.consume(0);
+                    let expr = parse_expression(tokens, true);
+                    tokens = expr.1;
+                    return (
+                        Expression::EqCmp(Box::new(curr.0), Box::new(expr.0)),
+                        tokens,
+                    );
+                }
+                (Token::GreaterThan, _) => {
+                    tokens.consume(0);
+                    let expr = parse_expression(tokens, true);
+                    tokens = expr.1;
+                    return (
+                        Expression::GtCmp(Box::new(curr.0), Box::new(expr.0)),
+                        tokens,
+                    );
+                }
+                (Token::Period, _) => {
+                    tokens.consume(0);
+                    let expr = parse_property(&mut tokens);
+                    curr = (
+                        Expression::PropertyAccess(Box::new(curr.0), Box::new(expr)),
+                        tokens.clone(),
+                    );
+                }
+                (Token::LessThan, _) => {
+                    tokens.consume(0);
+                    let expr = parse_expression(tokens, true);
+                    tokens = expr.1;
+                    return (
+                        Expression::LtCmp(Box::new(curr.0), Box::new(expr.0)),
+                        tokens,
+                    );
+                }
+                (Token::GreaterThanEq, _) => {
+                    tokens.consume(0);
+                    let expr = parse_expression(tokens, true);
+                    tokens = expr.1;
+                    return (
+                        Expression::GteCmp(Box::new(curr.0), Box::new(expr.0)),
+                        tokens,
+                    );
+                }
+                (Token::LessThanEq, _) => {
+                    tokens.consume(0);
+                    let expr = parse_expression(tokens, true);
+                    tokens = expr.1;
+                    return (
+                        Expression::LteCmp(Box::new(curr.0), Box::new(expr.0)),
+                        tokens,
+                    );
+                }
+                (Token::Range, _) => {
+                    tokens.consume(0);
+                    let expr = parse_expression(tokens, true);
+                    tokens = expr.1;
+                    return (
+                        Expression::Range(Box::new(curr.0), Box::new(expr.0)),
+                        tokens,
+                    );
+                }
+                (Token::Plus, _) => {
+                    tokens.consume(0);
+                    let expr = parse_expression(tokens, true);
+                    tokens = expr.1;
+                    return (Expression::Plus(Box::new(curr.0), Box::new(expr.0)), tokens);
+                }
+                (Token::Minus, _) => {
+                    tokens.consume(0);
+                    let expr = parse_expression(tokens, true);
+                    tokens = expr.1;
+                    return (
+                        Expression::Minus(Box::new(curr.0), Box::new(expr.0)),
+                        tokens,
+                    );
+                }
+                (Token::OpenBracket, _) => {
+                    tokens.consume(0);
+                    let expr = parse_expression(tokens, true);
+                    tokens = expr.1;
+                    match tokens.consume(0) {
+                        (Token::CloseBracket, _) => {}
+                        (_, s) => show_error(format!("Expected closing bracket"), &s, tokens.meta),
+                    };
 
-                return (
-                    Expression::ArrayIndex(Box::new(curr.0), Box::new(expr.0)),
-                    tokens,
-                );
+                    return (
+                        Expression::ArrayIndex(Box::new(curr.0), Box::new(expr.0)),
+                        tokens,
+                    );
+                }
+                (Token::Multiply, _) => {
+                    tokens.consume(0);
+                    let expr = parse_expression(tokens, true);
+                    tokens = expr.1;
+                    return (
+                        Expression::Multiply(Box::new(curr.0), Box::new(expr.0)),
+                        tokens,
+                    );
+                }
+                _ => return curr,
+            };
+        } else {
+            return curr;
+        }
+    }
+}
+fn parse_property(tokens: &mut ParserStream<(Token, Range<usize>), String>) -> Expression {
+    match tokens.peek(0) {
+        (Token::ObjectName(name), _) => match tokens.peek(1) {
+            (Token::OpenParen, _) => {
+                let res = parse_function_call(tokens.clone());
+                *tokens = res.1;
+                res.0
             }
-            (Token::Multiply, _) => {
-                tokens.consume(0);
-                let expr = parse_expression(tokens, true);
-                tokens = expr.1;
-                return (
-                    Expression::Multiply(Box::new(curr.0), Box::new(expr.0)),
-                    tokens,
-                );
-            }
-            _ => return curr,
-        };
-    } else {
-        return curr;
+            (_, s) => show_error(format!("Expected valid property"), &s, tokens.meta.clone()),
+        },
+        (_, s) => show_error(format!("Expected valid property"), &s, tokens.meta.clone()),
     }
 }
 fn parse_var_def(

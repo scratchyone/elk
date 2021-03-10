@@ -158,6 +158,15 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
             }
             Ok(Value::Array(vitems))
         }
+        Expression::PropertyAccess(object, property) => {
+            match interpret_expression(*object, var_map)? {
+                Value::Array(arr) => match *property {
+                    Expression::FuncCall(fc, _) if fc == "len" => Ok(Value::Int(arr.len() as i32)),
+                    _ => panic!("Property not found"),
+                },
+                _ => panic!("Property not found"),
+            }
+        }
         Expression::ArrayIndex(array, index) => match interpret_expression(*array, var_map)? {
             Value::Array(arr) => match interpret_expression(*index, var_map)? {
                 Value::Int(i) => Ok(arr[i as usize].clone()),
