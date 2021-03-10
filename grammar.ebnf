@@ -1,8 +1,0 @@
-code = statement*;
-statement = (print | func_def | function_call | var_assign | var_def) ";\n";
-expression = NUMBER | QUOTSTRING | function_call | OBJNAME;
-print = PRINT expression;
-var_def = "let " OBJNAME "=" expression;
-var_assign = OBJNAME "=" expression;
-function_call = OBJNAME "(" (expression ",")* ")";
-func_def = "function " OBJNAME "(" (expression ",")* ")" "{" statement* "}";
