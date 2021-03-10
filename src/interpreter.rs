@@ -11,6 +11,7 @@ pub enum Value {
     Func(Vec<String>, Vec<Statement>, VarMap),
     Bool(bool),
     Range(Range<i32>),
+    Array(Vec<Value>),
     Null,
 }
 impl std::fmt::Display for Value {
@@ -27,6 +28,15 @@ impl std::fmt::Display for Value {
                 )
             }
             Self::Null => write!(f, "null"),
+            Self::Array(values) => write!(
+                f,
+                "[{}]",
+                values
+                    .iter()
+                    .map(|n| format!("{}", n))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
             Self::Bool(true) => write!(f, "true"),
             Self::Range(r) => write!(f, "{}..{}", r.start, r.end),
             Self::Bool(false) => write!(f, "false"),
@@ -81,6 +91,7 @@ fn interpret_scope(
 fn value_to_iter(value: Value) -> Vec<Value> {
     match value {
         Value::Range(r) => r.into_iter().map(|n| Value::Int(n)).collect(),
+        Value::Array(items) => items,
         t => panic!("{} cannot be converted to an iter", t),
     }
 }
@@ -140,6 +151,21 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
         Expression::Int(i) => Ok(Value::Int(i)),
         Expression::Bool(b) => Ok(Value::Bool(b)),
         Expression::String(s) => Ok(Value::String(s)),
+        Expression::Array(items) => {
+            let mut vitems = vec![];
+            for item in items {
+                vitems.push(interpret_expression(item, var_map)?);
+            }
+            Ok(Value::Array(vitems))
+        }
+        Expression::ArrayIndex(array, index) => match interpret_expression(*array, var_map)? {
+            Value::Array(arr) => match interpret_expression(*index, var_map)? {
+                Value::Int(i) => Ok(arr[i as usize].clone()),
+                _ => panic!("Cannot index with a non-int"),
+            },
+
+            v => panic!("Cannot index into {}", v),
+        },
         Expression::If(expr, statements) => {
             if match interpret_expression(*expr.clone(), var_map)? {
                 Value::Bool(v) => v,
@@ -256,9 +282,7 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
                 interpret_expression(*v2, var_map)?,
             ) {
                 (Value::Int(i), Value::Int(b)) => Ok(Value::Int(i + b)),
-                (Value::String(i), Value::Int(b)) => Ok(Value::String(i + &b.to_string())),
-                (Value::Int(i), Value::String(b)) => Ok(Value::String(i.to_string() + &b)),
-                (Value::String(i), Value::String(b)) => Ok(Value::String(i + &b)),
+                (a, b) => Ok(Value::String(a.to_string() + &b.to_string())),
                 _ => panic!("Cannot add conflicting types"),
             }
         }

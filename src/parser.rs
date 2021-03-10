@@ -47,6 +47,12 @@ pub enum Token {
     #[token("-")]
     Minus,
 
+    #[token("[")]
+    OpenBracket,
+
+    #[token("]")]
+    CloseBracket,
+
     #[regex("\n")]
     Newline,
 
@@ -179,6 +185,8 @@ pub enum Expression {
     Multiply(Box<Expression>, Box<Expression>),
     Range(Box<Expression>, Box<Expression>),
     If(Box<Expression>, Vec<Statement>),
+    Array(Vec<Expression>),
+    ArrayIndex(Box<Expression>, Box<Expression>),
 }
 
 pub fn parse_code(tokens: ParserStream<(Token, Range<usize>), String>) -> Code {
@@ -330,6 +338,30 @@ fn parse_expression(
             };
             (expr.0, tokens)
         }
+        (Token::OpenBracket, _) => {
+            tokens.consume(0);
+            let mut first = true;
+            let mut items = vec![];
+            while !tokens.empty() && tokens.peek(0).0 != Token::CloseBracket {
+                if !first {
+                    match tokens.consume(0) {
+                        (Token::Comma, _) => {}
+                        (_, s) => show_error(format!("Expected comma"), &s, tokens.meta),
+                    };
+                }
+                first = false;
+                let res = parse_expression(tokens, true);
+                tokens = res.1;
+                items.push(res.0);
+            }
+            match tokens.consume(0) {
+                (Token::CloseBracket, _) => {}
+                (_, s) => show_error(format!("Expected closing bracket"), &s, tokens.meta),
+            };
+
+            (Expression::Array(items), tokens)
+        }
+
         (Token::ObjectName(n), _) => match tokens.clone().peek(1) {
             (Token::OpenParen, _) => parse_function_call(tokens),
             _ => {
@@ -408,6 +440,20 @@ fn parse_expression(
                 tokens = expr.1;
                 return (
                     Expression::Minus(Box::new(curr.0), Box::new(expr.0)),
+                    tokens,
+                );
+            }
+            (Token::OpenBracket, _) => {
+                tokens.consume(0);
+                let expr = parse_expression(tokens, true);
+                tokens = expr.1;
+                match tokens.consume(0) {
+                    (Token::CloseBracket, _) => {}
+                    (_, s) => show_error(format!("Expected closing bracket"), &s, tokens.meta),
+                };
+
+                return (
+                    Expression::ArrayIndex(Box::new(curr.0), Box::new(expr.0)),
                     tokens,
                 );
             }
