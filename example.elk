@@ -1,7 +1,11 @@
 function print(text) {
     __print text;
 }
+function print_n_times(text, n) {
+    // You can multiply a string by an int to repeat it
+    print((text + "\n") * n);
+}
 
-let x = "hello world";
-x = "nvm, goodbye world";
-print(x);
+let x = "this is a variable!!";
+x = "Hello, World!";
+print_n_times(x, 5);

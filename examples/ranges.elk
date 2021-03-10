@@ -1,0 +1,11 @@
+use "std.elk";
+
+function print_n_times(text, n) {
+    for i in 0..n {
+        println(i + ": " + text);
+    }
+}
+
+let x = "this is a variable!!";
+x = "Hello, World!";
+print_n_times(x, 5);

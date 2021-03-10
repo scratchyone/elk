@@ -1,10 +1,16 @@
 use crate::*;
 use std::collections::HashMap;
 #[derive(Debug, Clone)]
+enum Break {
+    ReturnStatement(Value),
+}
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i32),
     String(String),
-    Func(Vec<String>, Vec<Statement>),
+    Func(Vec<String>, Vec<Statement>, VarMap),
+    Bool(bool),
+    Range(Range<i32>),
     Null,
 }
 impl std::fmt::Display for Value {
@@ -12,13 +18,23 @@ impl std::fmt::Display for Value {
         match self {
             Self::Int(i) => write!(f, "{}", i),
             Self::String(s) => write!(f, "{}", s),
-            Self::Func(args, statements) => write!(f, "fn({})", args.join(", ")),
+            Self::Func(args, statements, var_map) => {
+                write!(
+                    f,
+                    "fn({}) with {} global vars",
+                    args.join(", "),
+                    var_map.len()
+                )
+            }
             Self::Null => write!(f, "null"),
+            Self::Bool(true) => write!(f, "true"),
+            Self::Range(r) => write!(f, "{}..{}", r.start, r.end),
+            Self::Bool(false) => write!(f, "false"),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Variable {
     pub value: Value,
     pub name: String,
@@ -32,59 +48,146 @@ impl std::fmt::Display for Variable {
 pub type VarMap = HashMap<String, Variable>;
 
 pub fn interpret_pub(code: Code) -> VarMap {
-    let var_map = VarMap::new();
-    interpret_scope(code, var_map)
+    let mut var_map = VarMap::new();
+    interpret_scope(code, &mut var_map, vec![]).unwrap()
 }
-fn interpret_scope(code: Code, var_map: VarMap) -> VarMap {
-    let mut var_map = var_map;
-    for statement in code.statements {
-        interpret_statement(statement, &mut var_map);
+fn interpret_scope(
+    code: Code,
+    var_map: &mut VarMap,
+    locals: Vec<Variable>,
+) -> Result<VarMap, Break> {
+    let mut new_var_map = var_map.clone();
+    for local in locals {
+        new_var_map.insert(local.name.clone(), local);
     }
-    var_map
+    for statement in code.statements {
+        match statement {
+            Statement::Return(expr) => Err(Break::ReturnStatement(interpret_expression(
+                expr,
+                &mut new_var_map,
+            )?))?,
+            _ => interpret_statement(statement, &mut new_var_map)?,
+        }
+    }
+    for (name, variable) in new_var_map.clone() {
+        if let Some(old_var) = var_map.get(&name) {
+            if old_var != &variable {
+                var_map.insert(name, variable.clone());
+            }
+        }
+    }
+    Ok(new_var_map.clone())
 }
-fn interpret_statement(statement: Statement, var_map: &mut VarMap) {
+fn value_to_iter(value: Value) -> Vec<Value> {
+    match value {
+        Value::Range(r) => r.into_iter().map(|n| Value::Int(n)).collect(),
+        t => panic!("{} cannot be converted to an iter", t),
+    }
+}
+fn interpret_statement(statement: Statement, var_map: &mut VarMap) -> Result<(), Break> {
     match statement {
-        Statement::Print(expr) => println!("{}", interpret_expression(expr, var_map)),
+        Statement::Print(expr) => print!("{}", interpret_expression(expr, var_map)?),
+        Statement::Return(_) => panic!("Internal interpreter error, return statement should have been handled by calling scope"),
         Statement::Expr(expr) => {
-            interpret_expression(expr, var_map);
+            interpret_expression(expr, var_map)?;
         }
         Statement::VarDef(name, expr) | Statement::VarAssign(name, expr) => {
-            let value = interpret_expression(expr, var_map);
+            let value = interpret_expression(expr, var_map)?;
             var_map.insert(name.clone(), Variable { value, name });
+        }
+        Statement::ForIn(name, expr, statements) => {
+            for value in value_to_iter(interpret_expression(expr.clone(), var_map)?) {
+                 interpret_scope(
+                    Code {
+                        statements: statements.clone(),
+                    },
+                    var_map,
+                    vec![Variable {
+                        name: name.clone(),
+                        value,
+                    }],
+                )?;
+            }
+        }
+        Statement::WhileLoop(expr, statements) => {
+            while match interpret_expression(expr.clone(), var_map)? {
+                Value::Bool(v) => v,
+                _ => panic!("Boolean expected"),
+            } {
+                interpret_scope(
+                    Code {
+                        statements: statements.clone(),
+                    },
+                    var_map,
+                    vec![],
+                )?;
+            }
         }
         Statement::FuncDef(name, args, statements) => {
             var_map.insert(
                 name.clone(),
                 Variable {
-                    value: Value::Func(args, statements),
+                    value: Value::Func(args, statements, var_map.clone()),
                     name,
                 },
             );
         }
-    }
+    };
+    Ok(())
 }
-fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Value {
+fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<Value, Break> {
     match expression {
-        Expression::Int(i) => Value::Int(i),
-        Expression::String(s) => Value::String(s),
+        Expression::Int(i) => Ok(Value::Int(i)),
+        Expression::Bool(b) => Ok(Value::Bool(b)),
+        Expression::String(s) => Ok(Value::String(s)),
+        Expression::If(expr, statements) => {
+            if match interpret_expression(*expr.clone(), var_map)? {
+                Value::Bool(v) => v,
+                _ => panic!("Boolean expected"),
+            } {
+                interpret_scope(
+                    Code {
+                        statements: statements.clone(),
+                    },
+                    var_map,
+                    vec![],
+                )?;
+            };
+            Ok(Value::Null)
+        }
+
+        Expression::Range(v1, v2) => {
+            match (
+                interpret_expression(*v1, var_map)?,
+                interpret_expression(*v2, var_map)?,
+            ) {
+                (Value::Int(i), Value::Int(b)) => Ok(Value::Range(i..b)),
+                _ => panic!("Range can only be created between ints"),
+            }
+        }
         Expression::FuncCall(name, args) => {
             if let Some(v) = var_map.get(&name) {
-                if let Value::Func(arg_names, code) = v.value.clone() {
+                if let Value::Func(arg_names, code, func_var_map) = v.value.clone() {
                     if arg_names.len() != args.len() {
                         panic!("Expected {} args, got {}", arg_names.len(), args.len());
                     }
-                    let mut new_map = var_map.clone();
-                    for (name, expr) in arg_names.into_iter().zip(args.into_iter()) {
-                        new_map.insert(
-                            name.clone(),
-                            Variable {
+                    match interpret_scope(
+                        Code { statements: code },
+                        &mut var_map.clone(),
+                        arg_names
+                            .into_iter()
+                            .zip(args.into_iter())
+                            .map(|(name, expr)| Variable {
                                 name: name,
-                                value: interpret_expression(expr, var_map),
-                            },
-                        );
+                                value: interpret_expression(expr, var_map).unwrap(),
+                            })
+                            .collect(),
+                    ) {
+                        Ok(_) => Ok(Value::Null),
+                        Err(b) => match b {
+                            Break::ReturnStatement(value) => Ok(value),
+                        },
                     }
-                    interpret_scope(Code { statements: code }, new_map);
-                    Value::Null
                 } else {
                     panic!("{} is not a function", name);
                 }
@@ -94,9 +197,88 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Value {
         }
         Expression::VariableReference(name) => {
             if let Some(var) = var_map.get(&name) {
-                var.value.clone()
+                Ok(var.value.clone())
             } else {
                 panic!("Variable {} not found", name);
+            }
+        }
+        Expression::EqCmp(v1, v2) => {
+            match (
+                interpret_expression(*v1, var_map)?,
+                interpret_expression(*v2, var_map)?,
+            ) {
+                (Value::Int(i), Value::Int(b)) => Ok(Value::Bool(i == b)),
+                (Value::String(i), Value::String(b)) => Ok(Value::Bool(i == b)),
+                (Value::Bool(i), Value::Bool(b)) => Ok(Value::Bool(i == b)),
+                (Value::Null, Value::Null) => Ok(Value::Bool(true)),
+                _ => Ok(Value::Bool(false)),
+            }
+        }
+        Expression::GtCmp(v1, v2) => {
+            match (
+                interpret_expression(*v1, var_map)?,
+                interpret_expression(*v2, var_map)?,
+            ) {
+                (Value::Int(i), Value::Int(b)) => Ok(Value::Bool(i > b)),
+                _ => Ok(Value::Bool(false)),
+            }
+        }
+        Expression::LtCmp(v1, v2) => {
+            match (
+                interpret_expression(*v1, var_map)?,
+                interpret_expression(*v2, var_map)?,
+            ) {
+                (Value::Int(i), Value::Int(b)) => Ok(Value::Bool(i < b)),
+                _ => Ok(Value::Bool(false)),
+            }
+        }
+        Expression::GteCmp(v1, v2) => {
+            match (
+                interpret_expression(*v1, var_map)?,
+                interpret_expression(*v2, var_map)?,
+            ) {
+                (Value::Int(i), Value::Int(b)) => Ok(Value::Bool(i >= b)),
+                _ => Ok(Value::Bool(false)),
+            }
+        }
+        Expression::LteCmp(v1, v2) => {
+            match (
+                interpret_expression(*v1, var_map)?,
+                interpret_expression(*v2, var_map)?,
+            ) {
+                (Value::Int(i), Value::Int(b)) => Ok(Value::Bool(i <= b)),
+                _ => Ok(Value::Bool(false)),
+            }
+        }
+        Expression::Plus(v1, v2) => {
+            match (
+                interpret_expression(*v1, var_map)?,
+                interpret_expression(*v2, var_map)?,
+            ) {
+                (Value::Int(i), Value::Int(b)) => Ok(Value::Int(i + b)),
+                (Value::String(i), Value::Int(b)) => Ok(Value::String(i + &b.to_string())),
+                (Value::Int(i), Value::String(b)) => Ok(Value::String(i.to_string() + &b)),
+                (Value::String(i), Value::String(b)) => Ok(Value::String(i + &b)),
+                _ => panic!("Cannot add conflicting types"),
+            }
+        }
+        Expression::Minus(v1, v2) => {
+            match (
+                interpret_expression(*v1, var_map)?,
+                interpret_expression(*v2, var_map)?,
+            ) {
+                (Value::Int(i), Value::Int(b)) => Ok(Value::Int(i - b)),
+                _ => panic!("Cannot subtract conflicting types"),
+            }
+        }
+        Expression::Multiply(v1, v2) => {
+            match (
+                interpret_expression(*v1, var_map)?,
+                interpret_expression(*v2, var_map)?,
+            ) {
+                (Value::Int(i), Value::Int(b)) => Ok(Value::Int(i * b)),
+                (Value::String(i), Value::Int(b)) => Ok(Value::String(i.repeat(b as usize))),
+                _ => panic!("Cannot multiply conflicting types"),
             }
         }
     }

@@ -1,0 +1,21 @@
+use "std.elk";
+
+function fib_recursive(n) {
+    if n <= 1 {
+        return n;
+    }
+    return fib_recursive(n - 1) + fib_recursive(n - 2);
+}
+function fib_loop(n) {
+    let n1 = 0;
+    let n2 = 1;
+    for i in 0..(n - 1) {
+        let tmp = n1 + n2;
+        n1 = n2;
+        n2 = tmp;
+    }
+    return n2;
+}
+let num = 10;
+println(fib_recursive(num));
+println(fib_loop(num));

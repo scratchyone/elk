@@ -1,0 +1,6 @@
+function print(text) {
+    __print text;
+}
+function println(text) {
+    print(text + "\n");
+}
