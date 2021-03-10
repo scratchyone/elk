@@ -759,3 +759,50 @@ pub fn show_error(error: String, span: &Range<usize>, code: String) -> ! {
     term::emit(&mut writer.lock(), &config, &files, &diagnostic).unwrap();
     panic!();
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn stream(contents: String) -> ParserStream<(Token, std::ops::Range<usize>), String> {
+        let lex = Token::lexer(&contents).spanned().collect::<Vec<_>>();
+        println!("{:#?}", Token::lexer(&contents).collect::<Vec<_>>());
+        ParserStream::new(
+            lex.clone(),
+            (Token::Error, lex.last().unwrap().1.clone()),
+            contents,
+        )
+    }
+    #[test]
+    fn add() {
+        assert_eq!(
+            parse_expression(stream(format!("5 + 2")), true).0,
+            Expression::Plus(Box::new(Expression::Int(5)), Box::new(Expression::Int(2)))
+        );
+    }
+    #[test]
+    fn subtract() {
+        assert_eq!(
+            parse_expression(stream(format!("5 - 2")), true).0,
+            Expression::Minus(Box::new(Expression::Int(5)), Box::new(Expression::Int(2)))
+        );
+    }
+    #[test]
+    fn multiply() {
+        assert_eq!(
+            parse_expression(stream(format!("5 * 2")), true).0,
+            Expression::Multiply(Box::new(Expression::Int(5)), Box::new(Expression::Int(2)))
+        );
+    }
+    #[test]
+    fn negative_ordering() {
+        assert_eq!(
+            parse_expression(stream(format!("-5 + 2")), true).0,
+            Expression::Plus(
+                Box::new(Expression::Minus(
+                    Box::new(Expression::Int(0)),
+                    Box::new(Expression::Int(5))
+                )),
+                Box::new(Expression::Int(2))
+            )
+        );
+    }
+}
