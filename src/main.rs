@@ -16,14 +16,16 @@ fn main() {
     if !contents.ends_with("\n") {
         contents += "\n";
     }
-    let lex = Token::lexer(&contents).spanned().collect::<Vec<_>>();
+    let lex = Token::lexer(&contents)
+        .spanned()
+        .map(|n| (n.0, (n.1, (args.last().unwrap().clone(), contents.clone()))))
+        .collect::<Vec<_>>();
     println!("{:#?}", Token::lexer(&contents).collect::<Vec<_>>());
     let code = parse_code(ParserStream::new(
         lex.clone(),
         (Token::Error, lex.last().unwrap().1.clone()),
-        contents,
     ));
-    println!("{:#?}", code);
+    //println!("{:#?}", code);
     green_ln!("Parsed successfully!");
     let vars = interpreter::interpret_pub(code);
     green_ln!("Finished running");

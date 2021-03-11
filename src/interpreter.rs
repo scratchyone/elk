@@ -8,7 +8,7 @@ enum Break {
 pub enum Value {
     Int(i32),
     String(String),
-    Func(Vec<String>, Vec<Statement>, VarMap),
+    Func(Vec<String>, Vec<RangedT<Statement>>, VarMap),
     Bool(bool),
     Range(Range<i32>),
     Array(Vec<Value>),
@@ -72,7 +72,7 @@ fn interpret_scope(
     }
     for statement in code.statements {
         match statement {
-            Statement::Return(expr) => Err(Break::ReturnStatement(interpret_expression(
+            (Statement::Return(expr), _) => Err(Break::ReturnStatement(interpret_expression(
                 expr,
                 &mut new_var_map,
             )?))?,
@@ -88,7 +88,7 @@ fn interpret_scope(
     }
     Ok(new_var_map.clone())
 }
-fn value_to_iter(value: Value) -> Vec<Value> {
+fn value_to_iter(value: Value, span: TaggedRange) -> Vec<Value> {
     match value {
         Value::Range(r) => r.into_iter().map(|n| Value::Int(n)).collect(),
         Value::Array(items) => items,
@@ -96,29 +96,29 @@ fn value_to_iter(value: Value) -> Vec<Value> {
             .split("")
             .map(|n| Value::String(n.to_string()))
             .collect(),
-        t => panic!("{} cannot be converted to an iter", t),
+        t => show_error(format!("{} cannot be converted to an iter", t), &span),
     }
 }
-fn interpret_statement(statement: Statement, var_map: &mut VarMap) -> Result<(), Break> {
+fn interpret_statement(statement: RangedT<Statement>, var_map: &mut VarMap) -> Result<(), Break> {
     match statement {
-        Statement::Print(expr) => print!("{}", interpret_expression(expr, var_map)?),
-        Statement::Return(_) => panic!("Internal interpreter error, return statement should have been handled by calling scope"),
-        Statement::Expr(expr) => {
+        (Statement::Print(expr), _) => print!("{}", interpret_expression(expr, var_map)?),
+        (Statement::Return(_), _) => panic!("Internal interpreter error, return statement should have been handled by calling scope"),
+        (Statement::Expr(expr), _) => {
             interpret_expression(expr, var_map)?;
         }
-        Statement::VarDef(name, expr) => {
+        (Statement::VarDef(name, expr),_) => {
             let value = interpret_expression(expr, var_map)?;
             var_map.insert(name.clone(), Variable { value, name });
         }
-        Statement::VarAssign(name, expr) => {
+        (Statement::VarAssign(name, expr) ,span)=> {
             if !var_map.contains_key(&name) {
-                panic!("Variable not defined");
+                show_error(format!("Variable not defined"),&span);
             }
             let value = interpret_expression(expr, var_map)?;
             var_map.insert(name.clone(), Variable { value, name });
         }
-        Statement::ForIn(name, expr, statements) => {
-            for value in value_to_iter(interpret_expression(expr.clone(), var_map)?) {
+        (Statement::ForIn(name, expr, statements),_) => {
+            for value in value_to_iter(interpret_expression(expr.clone(), var_map)?, expr.1) {
                  interpret_scope(
                     Code {
                         statements: statements.clone(),
@@ -131,10 +131,10 @@ fn interpret_statement(statement: Statement, var_map: &mut VarMap) -> Result<(),
                 )?;
             }
         }
-        Statement::WhileLoop(expr, statements) => {
+        (Statement::WhileLoop(expr, statements),_) => {
             while match interpret_expression(expr.clone(), var_map)? {
                 Value::Bool(v) => v,
-                _ => panic!("Boolean expected"),
+                _ => show_error(format!("Boolean expected"), &expr.1),
             } {
                 interpret_scope(
                     Code {
@@ -145,7 +145,7 @@ fn interpret_statement(statement: Statement, var_map: &mut VarMap) -> Result<(),
                 )?;
             }
         }
-        Statement::FuncDef(name, args, statements) => {
+        (Statement::FuncDef(name, args, statements),_) => {
             var_map.insert(
                 name.clone(),
                 Variable {
@@ -157,43 +157,51 @@ fn interpret_statement(statement: Statement, var_map: &mut VarMap) -> Result<(),
     };
     Ok(())
 }
-fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<Value, Break> {
+fn interpret_expression(
+    expression: RangedT<Expression>,
+    var_map: &mut VarMap,
+) -> Result<Value, Break> {
     match expression {
-        Expression::Int(i) => Ok(Value::Int(i)),
-        Expression::Bool(b) => Ok(Value::Bool(b)),
-        Expression::String(s) => Ok(Value::String(s)),
-        Expression::Array(items) => {
+        (Expression::Int(i), _) => Ok(Value::Int(i)),
+        (Expression::Null, _) => Ok(Value::Null),
+        (Expression::Bool(b), _) => Ok(Value::Bool(b)),
+        (Expression::String(s), _) => Ok(Value::String(s)),
+        (Expression::Array(items), _) => {
             let mut vitems = vec![];
             for item in items {
                 vitems.push(interpret_expression(item, var_map)?);
             }
             Ok(Value::Array(vitems))
         }
-        Expression::PropertyAccess(object, property) => {
+        (Expression::PropertyAccess(object, property), span) => {
             match interpret_expression(*object, var_map)? {
                 Value::Array(arr) => match *property {
-                    Expression::FuncCall(fc, _) if fc == "len" => Ok(Value::Int(arr.len() as i32)),
-                    Expression::FuncCall(fc, args) if fc == "join" => Ok(Value::String(
+                    (Expression::FuncCall(fc, _), _) if fc == "len" => {
+                        Ok(Value::Int(arr.len() as i32))
+                    }
+                    (Expression::FuncCall(fc, args), span) if fc == "join" => Ok(Value::String(
                         arr.iter()
                             .map(|n| format!("{}", n))
                             .collect::<Vec<_>>()
                             .join(
                                 match interpret_expression(args[0].clone(), var_map)? {
                                     Value::String(s) => s,
-                                    _ => panic!("Join expects a string"),
+                                    _ => show_error(format!("Join expects a string arg"), &span),
                                 }
                                 .as_str(),
                             ),
                     )),
-                    Expression::FuncCall(fc, _) if fc == "push" => {
-                        panic!("idk how to push to that");
+                    (Expression::FuncCall(fc, _), span) if fc == "push" => {
+                        show_error(format!("idk how to push to that"), &span);
                         Ok(Value::Null)
                     }
-                    _ => panic!("Property not found"),
+                    (_, span) => show_error(format!("Join expects a string arg"), &span),
                 },
                 Value::String(arr) => match *property {
-                    Expression::FuncCall(fc, _) if fc == "len" => Ok(Value::Int(arr.len() as i32)),
-                    Expression::FuncCall(fc, args) if fc == "split" => Ok(Value::Array(
+                    (Expression::FuncCall(fc, _), _) if fc == "len" => {
+                        Ok(Value::Int(arr.len() as i32))
+                    }
+                    (Expression::FuncCall(fc, args), span) if fc == "split" => Ok(Value::Array(
                         match interpret_expression(args[0].clone(), var_map)? {
                             Value::String(s) if s == "" => arr
                                 .split_terminator("")
@@ -204,7 +212,9 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
                                 .split(
                                     match val {
                                         Value::String(s) => s,
-                                        _ => panic!("Split expects a string"),
+                                        _ => {
+                                            show_error(format!("Split expects a string arg"), &span)
+                                        }
                                     }
                                     .as_str(),
                                 )
@@ -212,23 +222,25 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
                                 .collect(),
                         },
                     )),
-                    _ => panic!("Property not found"),
+                    (_, span) => show_error(format!("Property not found"), &span),
                 },
-                _ => panic!("Property not found"),
+                _ => show_error(format!("Property not found"), &span),
             }
         }
-        Expression::ArrayIndex(array, index) => match interpret_expression(*array, var_map)? {
-            Value::Array(arr) => match interpret_expression(*index, var_map)? {
-                Value::Int(i) => Ok(arr[i as usize].clone()),
-                _ => panic!("Cannot index with a non-int"),
-            },
+        (Expression::ArrayIndex(array, index), _) => {
+            match interpret_expression(*array.clone(), var_map)? {
+                Value::Array(arr) => match interpret_expression(*index.clone(), var_map)? {
+                    Value::Int(i) => Ok(arr[i as usize].clone()),
+                    _ => show_error(format!("Cannot index with a non-int"), &index.1),
+                },
 
-            v => panic!("Cannot index into {}", v),
-        },
-        Expression::If(expr, statements) => {
+                v => show_error(format!("Cannot index into {}", v), &array.1),
+            }
+        }
+        (Expression::If(expr, statements), _) => {
             if match interpret_expression(*expr.clone(), var_map)? {
                 Value::Bool(v) => v,
-                _ => panic!("Boolean expected"),
+                _ => show_error(format!("Boolean expected"), &expr.1),
             } {
                 interpret_scope(
                     Code {
@@ -241,20 +253,23 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
             Ok(Value::Null)
         }
 
-        Expression::Range(v1, v2) => {
+        (Expression::Range(v1, v2), span) => {
             match (
                 interpret_expression(*v1, var_map)?,
                 interpret_expression(*v2, var_map)?,
             ) {
                 (Value::Int(i), Value::Int(b)) => Ok(Value::Range(i..b)),
-                _ => panic!("Range can only be created between ints"),
+                _ => show_error(format!("Range can only be created between ints"), &span),
             }
         }
-        Expression::FuncCall(name, args) => {
+        (Expression::FuncCall(name, args), span) => {
             if let Some(v) = var_map.get(&name) {
                 if let Value::Func(arg_names, code, func_var_map) = v.value.clone() {
                     if arg_names.len() != args.len() {
-                        panic!("Expected {} args, got {}", arg_names.len(), args.len());
+                        show_error(
+                            format!("Expected {} args, got {}", arg_names.len(), args.len()),
+                            &span,
+                        );
                     }
                     match interpret_scope(
                         Code { statements: code },
@@ -274,20 +289,20 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
                         },
                     }
                 } else {
-                    panic!("{} is not a function", name);
+                    show_error(format!("{} is not a function", name), &span);
                 }
             } else {
-                panic!("Function {} not found", name);
+                show_error(format!("Function {} not found", name), &span);
             }
         }
-        Expression::VariableReference(name) => {
+        (Expression::VariableReference(name), span) => {
             if let Some(var) = var_map.get(&name) {
                 Ok(var.value.clone())
             } else {
-                panic!("Variable {} not found", name);
+                show_error(format!("Variable {} not found", name), &span);
             }
         }
-        Expression::EqCmp(v1, v2) => {
+        (Expression::EqCmp(v1, v2), _) => {
             match (
                 interpret_expression(*v1, var_map)?,
                 interpret_expression(*v2, var_map)?,
@@ -299,7 +314,7 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
                 _ => Ok(Value::Bool(false)),
             }
         }
-        Expression::GtCmp(v1, v2) => {
+        (Expression::GtCmp(v1, v2), _) => {
             match (
                 interpret_expression(*v1, var_map)?,
                 interpret_expression(*v2, var_map)?,
@@ -308,7 +323,7 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
                 _ => Ok(Value::Bool(false)),
             }
         }
-        Expression::LtCmp(v1, v2) => {
+        (Expression::LtCmp(v1, v2), _) => {
             match (
                 interpret_expression(*v1, var_map)?,
                 interpret_expression(*v2, var_map)?,
@@ -317,7 +332,7 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
                 _ => Ok(Value::Bool(false)),
             }
         }
-        Expression::GteCmp(v1, v2) => {
+        (Expression::GteCmp(v1, v2), _) => {
             match (
                 interpret_expression(*v1, var_map)?,
                 interpret_expression(*v2, var_map)?,
@@ -326,7 +341,7 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
                 _ => Ok(Value::Bool(false)),
             }
         }
-        Expression::LteCmp(v1, v2) => {
+        (Expression::LteCmp(v1, v2), _) => {
             match (
                 interpret_expression(*v1, var_map)?,
                 interpret_expression(*v2, var_map)?,
@@ -335,42 +350,42 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
                 _ => Ok(Value::Bool(false)),
             }
         }
-        Expression::Plus(v1, v2) => {
+        (Expression::Plus(v1, v2), span) => {
             match (
                 interpret_expression(*v1, var_map)?,
                 interpret_expression(*v2, var_map)?,
             ) {
                 (Value::Int(i), Value::Int(b)) => Ok(Value::Int(i + b)),
                 (a, b) => Ok(Value::String(a.to_string() + &b.to_string())),
-                _ => panic!("Cannot add conflicting types"),
+                _ => show_error(format!("Cannot add conflicting types"), &span),
             }
         }
-        Expression::Minus(v1, v2) => {
+        (Expression::Minus(v1, v2), span) => {
             match (
                 interpret_expression(*v1, var_map)?,
                 interpret_expression(*v2, var_map)?,
             ) {
                 (Value::Int(i), Value::Int(b)) => Ok(Value::Int(i - b)),
-                _ => panic!("Cannot subtract conflicting types"),
+                _ => show_error(format!("Cannot subtract conflicting types"), &span),
             }
         }
-        Expression::Multiply(v1, v2) => {
+        (Expression::Multiply(v1, v2), span) => {
             match (
                 interpret_expression(*v1, var_map)?,
                 interpret_expression(*v2, var_map)?,
             ) {
                 (Value::Int(i), Value::Int(b)) => Ok(Value::Int(i * b)),
                 (Value::String(i), Value::Int(b)) => Ok(Value::String(i.repeat(b as usize))),
-                _ => panic!("Cannot multiply conflicting types"),
+                _ => show_error(format!("Cannot multiply conflicting types"), &span),
             }
         }
-        Expression::Mod(v1, v2) => {
+        (Expression::Mod(v1, v2), span) => {
             match (
                 interpret_expression(*v1, var_map)?,
                 interpret_expression(*v2, var_map)?,
             ) {
                 (Value::Int(i), Value::Int(b)) => Ok(Value::Int(i % b)),
-                _ => panic!("Cannot mod conflicting types"),
+                _ => show_error(format!("Cannot mod conflicting types"), &span),
             }
         }
     }
