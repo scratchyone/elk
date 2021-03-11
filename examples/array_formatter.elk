@@ -1,0 +1,30 @@
+use "std.elk";
+
+function prettify_array(array) {
+    let buffer = "[";
+    let first_item = true;
+    let buffer_last_len = 0;
+    let count = 0;
+    for item in array {
+        if !first_item {
+            buffer += ", ";
+        }
+        if count > 40 {
+            buffer += "\n    ";
+            count = 0;
+        }
+        first_item = false;
+        buffer += "\"" + item + "\"";
+        count += buffer.len() - buffer_last_len;
+        buffer_last_len = buffer.len();
+    }
+    buffer += "]";
+    return buffer;
+}
+
+let sentence = "hello world! How are you?";
+for word in sentence.split(" ") {
+    println(word);
+}
+println(prettify_array(sentence.split("")));
+println("Sentence is " + sentence.split("").len() + " characters long");

@@ -68,6 +68,9 @@ pub enum Token {
     #[token("false")]
     False,
 
+    #[token("!")]
+    ExclamationPoint,
+
     #[token("..")]
     Range,
 
@@ -97,6 +100,9 @@ pub enum Token {
 
     #[token("}")]
     CloseBrace,
+
+    #[token("%")]
+    Percent,
 
     #[token(".")]
     Period,
@@ -186,6 +192,7 @@ pub enum Expression {
     Plus(Box<Expression>, Box<Expression>),
     Minus(Box<Expression>, Box<Expression>),
     Multiply(Box<Expression>, Box<Expression>),
+    Mod(Box<Expression>, Box<Expression>),
     Range(Box<Expression>, Box<Expression>),
     If(Box<Expression>, Vec<Statement>),
     Array(Vec<Expression>),
@@ -213,12 +220,12 @@ fn preprocess(
     let mut in_comment = false;
     while !tokens.data.is_empty() {
         let (token, range) = tokens.consume(0);
-        if token == Token::Comment {
-            in_comment = true;
+        if token == Token::Newline || (token == Token::EOL && in_comment) {
+            in_comment = false;
             continue;
         }
-        if token == Token::Newline {
-            in_comment = false;
+        if token == Token::Comment {
+            in_comment = true;
             continue;
         }
         if token == Token::Use {
@@ -329,6 +336,16 @@ fn parse_expression(
             tokens = expr.1;
             (
                 Expression::Minus(Box::new(Expression::Int(0)), Box::new(expr.0)),
+                tokens,
+            )
+        }
+        (Token::ExclamationPoint, _) => {
+            tokens.consume(0);
+
+            let expr = parse_expression(tokens, false);
+            tokens = expr.1;
+            (
+                Expression::EqCmp(Box::new(expr.0), Box::new(Expression::Bool(false))),
                 tokens,
             )
         }
@@ -478,6 +495,12 @@ fn parse_expression(
                         Expression::Multiply(Box::new(curr.0), Box::new(expr.0)),
                         tokens,
                     );
+                }
+                (Token::Percent, _) => {
+                    tokens.consume(0);
+                    let expr = parse_expression(tokens, true);
+                    tokens = expr.1;
+                    return (Expression::Mod(Box::new(curr.0), Box::new(expr.0)), tokens);
                 }
                 _ => return curr,
             };

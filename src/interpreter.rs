@@ -92,6 +92,10 @@ fn value_to_iter(value: Value) -> Vec<Value> {
     match value {
         Value::Range(r) => r.into_iter().map(|n| Value::Int(n)).collect(),
         Value::Array(items) => items,
+        Value::String(items) => items
+            .split("")
+            .map(|n| Value::String(n.to_string()))
+            .collect(),
         t => panic!("{} cannot be converted to an iter", t),
     }
 }
@@ -102,7 +106,14 @@ fn interpret_statement(statement: Statement, var_map: &mut VarMap) -> Result<(),
         Statement::Expr(expr) => {
             interpret_expression(expr, var_map)?;
         }
-        Statement::VarDef(name, expr) | Statement::VarAssign(name, expr) => {
+        Statement::VarDef(name, expr) => {
+            let value = interpret_expression(expr, var_map)?;
+            var_map.insert(name.clone(), Variable { value, name });
+        }
+        Statement::VarAssign(name, expr) => {
+            if !var_map.contains_key(&name) {
+                panic!("Variable not defined");
+            }
             let value = interpret_expression(expr, var_map)?;
             var_map.insert(name.clone(), Variable { value, name });
         }
@@ -162,6 +173,45 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
             match interpret_expression(*object, var_map)? {
                 Value::Array(arr) => match *property {
                     Expression::FuncCall(fc, _) if fc == "len" => Ok(Value::Int(arr.len() as i32)),
+                    Expression::FuncCall(fc, args) if fc == "join" => Ok(Value::String(
+                        arr.iter()
+                            .map(|n| format!("{}", n))
+                            .collect::<Vec<_>>()
+                            .join(
+                                match interpret_expression(args[0].clone(), var_map)? {
+                                    Value::String(s) => s,
+                                    _ => panic!("Join expects a string"),
+                                }
+                                .as_str(),
+                            ),
+                    )),
+                    Expression::FuncCall(fc, _) if fc == "push" => {
+                        panic!("idk how to push to that");
+                        Ok(Value::Null)
+                    }
+                    _ => panic!("Property not found"),
+                },
+                Value::String(arr) => match *property {
+                    Expression::FuncCall(fc, _) if fc == "len" => Ok(Value::Int(arr.len() as i32)),
+                    Expression::FuncCall(fc, args) if fc == "split" => Ok(Value::Array(
+                        match interpret_expression(args[0].clone(), var_map)? {
+                            Value::String(s) if s == "" => arr
+                                .split_terminator("")
+                                .skip(1)
+                                .map(|n| Value::String(n.to_string()))
+                                .collect(),
+                            val => arr
+                                .split(
+                                    match val {
+                                        Value::String(s) => s,
+                                        _ => panic!("Split expects a string"),
+                                    }
+                                    .as_str(),
+                                )
+                                .map(|n| Value::String(n.to_string()))
+                                .collect(),
+                        },
+                    )),
                     _ => panic!("Property not found"),
                 },
                 _ => panic!("Property not found"),
@@ -312,6 +362,15 @@ fn interpret_expression(expression: Expression, var_map: &mut VarMap) -> Result<
                 (Value::Int(i), Value::Int(b)) => Ok(Value::Int(i * b)),
                 (Value::String(i), Value::Int(b)) => Ok(Value::String(i.repeat(b as usize))),
                 _ => panic!("Cannot multiply conflicting types"),
+            }
+        }
+        Expression::Mod(v1, v2) => {
+            match (
+                interpret_expression(*v1, var_map)?,
+                interpret_expression(*v2, var_map)?,
+            ) {
+                (Value::Int(i), Value::Int(b)) => Ok(Value::Int(i % b)),
+                _ => panic!("Cannot mod conflicting types"),
             }
         }
     }
